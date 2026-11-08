@@ -29,9 +29,13 @@ jobs:
           repository: mizorewww/gpui-kit-material
           path: gpui-kit-material
 
-      - uses: dtolnay/rust-toolchain@stable
+      # The Rust HOST toolchain must be the GNU one, not the runner default
+      # MSVC: embed-resource (used by gpui-pre's build script) picks its
+      # implementation from the host env it is compiled for, so an MSVC host
+      # makes it emit an MSVC .lib that the GNU linker cannot read.
+      - uses: dtolnay/rust-toolchain@master
         with:
-          targets: x86_64-pc-windows-gnu
+          toolchain: stable-x86_64-pc-windows-gnu
 
       - uses: msys2/setup-msys2@v2
         with:
