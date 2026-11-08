@@ -1,0 +1,85 @@
+name: Build Desktop (Windows)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-windows:
+    name: gdirect-desktop x86_64-pc-windows-gnu
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      OPENSSL_STATIC: '1'
+      CARGO_BUILD_TARGET: x86_64-pc-windows-gnu
+      CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: gcc
+      CC: gcc
+      CXX: g++
+    steps:
+      - name: Check out gdirect (this fork)
+        uses: actions/checkout@v4
+        with:
+          path: gdirect
+
+      - name: Check out gpui-kit-material (sibling, required by desktop/)
+        uses: actions/checkout@v4
+        with:
+          repository: mizorewww/gpui-kit-material
+          path: gpui-kit-material
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          path-type: inherit
+          update: true
+          install: >-
+            make patch tar xz diffutils
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-python
+
+      - name: Configure OpenSSL prefix
+        shell: msys2 {0}
+        run: echo "OPENSSL_PREFIX=$(cygpath -m /mingw64)" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gdirect/desktop
+          key: desktop-windows-gnu
+
+      - name: Build patched libaria2
+        shell: msys2 {0}
+        working-directory: gdirect
+        run: test -f target/libaria2/lib/libaria2.a || ./scripts/build-libaria2.sh
+
+      - name: Build desktop client
+        shell: msys2 {0}
+        working-directory: gdirect
+        run: cargo build --release --locked --manifest-path desktop/Cargo.toml
+
+      - name: Bundle exe with any MinGW runtime DLLs it needs
+        shell: msys2 {0}
+        working-directory: gdirect
+        run: |
+          set -euo pipefail
+          mkdir -p dist-desktop
+          cp desktop/target/x86_64-pc-windows-gnu/release/gdirect-desktop.exe dist-desktop/
+          objdump -p dist-desktop/gdirect-desktop.exe | grep 'DLL Name:' | awk '{print $3}' | sort -u > /tmp/dlls.txt
+          cat /tmp/dlls.txt
+          while read -r dll; do
+            if [ -f "/mingw64/bin/$dll" ]; then cp "/mingw64/bin/$dll" dist-desktop/; echo "bundled: $dll"; fi
+          done < /tmp/dlls.txt
+          ls -la dist-desktop/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gdirect-desktop-windows
+          path: gdirect/dist-desktop/*
+          if-no-files-found: error
